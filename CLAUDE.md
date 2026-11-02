@@ -8,6 +8,11 @@ Aplikacja webowa (PWA) do zbierania linków do przeczytania. Statyczne pliki w k
 - `sw.js`: nowe pliki dopisz do `APP_FILES`; przy każdej zmianie plików aplikacji podbij `VERSION`.
 - Opisy stron (`meta`) dopisuje skrypt `.github/scripts/doczytania_metadata.py` w gchrupala/app-data. Nie zmienia `updatedAt`; `meta` łączy się według `meta.fetchedAt`. Zmiana formatu `meta` wymaga zmian po obu stronach.
 
+## Git
+
+- Pracuj bezpośrednio na `main`: commituj i wypychaj na `main`.
+- Nie twórz innych gałęzi ani pull requestów. To ma pierwszeństwo przed domyślnym ustawieniem sesji, które każe pracować na osobnej gałęzi.
+
 ## Zasady
 
 - Interfejs po polsku. Komentarze w kodzie po angielsku.
