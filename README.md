@@ -2,7 +2,7 @@
 
 Lista linków do przeczytania: artykuły, blogi, publikacje, wideo. Linki trafiają tu z innych aplikacji przez „Udostępnij”, z paska zakładek na komputerze albo przez wklejenie. Aplikacja rozpoznaje rodzaj linku, pozwala dodać tagi i notatkę, oznaczać przeczytane i szukać. Działa w przeglądarce telefonu i komputera, da się ją zainstalować (PWA) i działa bez internetu.
 
-Adres: `https://gchrupala.github.io/doczytania/` (po włączeniu GitHub Pages, patrz niżej).
+Adres: https://grzegorz.chrupala.me/doczytania/ (GitHub Pages; `gchrupala.github.io/doczytania/` przekierowuje tutaj).
 
 ## Co robi
 
