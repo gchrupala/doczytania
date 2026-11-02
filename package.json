@@ -1,0 +1,11 @@
+{
+  "name": "doczytania",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Linki do przeczytania: zapisywanie z innych aplikacji, porządkowanie i wyszukiwanie.",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes serve -l 8080 .",
+    "test": "node --test test/*.test.js"
+  }
+}
