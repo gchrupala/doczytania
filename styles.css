@@ -606,8 +606,16 @@ section .edit {
 }
 
 .bookmarklet {
-  min-height: 32px;
   cursor: grab;
+}
+
+.bar-spacer {
+  width: 44px;
+}
+
+.label-link {
+  margin-left: 6px;
+  font-weight: 400;
 }
 
 .tag-list {
@@ -669,4 +677,8 @@ section .edit {
 .toast .link {
   color: var(--bg);
   font-weight: 600;
+}
+
+.tag-list li:last-child {
+  border-bottom: 0;
 }

@@ -4,7 +4,7 @@
 import * as S from './store.js';
 import { gitHubRemote, parsePerson, parseRepo, syncOnce, syncPath } from './sync.js';
 
-const VERSION = '1';
+const VERSION = '2';
 
 const KIND_ONE = {
   article: 'Artykuł',
@@ -502,43 +502,31 @@ function closeSheet() {
 // ---------- settings ----------
 
 function settingsView() {
-  const total = doc.items.length;
   const base = new URL('./', location.href).href;
   const bookmarklet = `javascript:(()=>{window.open('${base}?url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title),'doczytania')})()`;
   const tags = S.tagCounts(doc.items);
   return `<header class="bar">
       <button class="icon-btn" type="button" data-action="back" aria-label="Wróć">${ICON.back}</button>
       <h1>Ustawienia</h1>
-      <span></span>
+      <span class="bar-spacer"></span>
     </header>
     ${notices()}
     ${syncSection()}
     <section>
       <h2>Dodawanie linków</h2>
-      <h3>Android</h3>
-      <p>Zainstaluj aplikację: w Chrome menu ⋮ → „Zainstaluj aplikację” (albo „Dodaj do ekranu głównego”). Potem w dowolnej aplikacji wybierz „Udostępnij” → <strong>Doczytania</strong>.</p>
-      <h3>iPhone i iPad</h3>
-      <p>Safari nie pozwala aplikacjom z sieci odbierać udostępnień. Można zrobić skrót w aplikacji Skróty:</p>
-      <ol>
-        <li>Nowy skrót → w ustawieniach skrótu włącz „Pokaż w arkuszu udostępniania”, typ: adresy URL.</li>
-        <li>Dodaj czynność „Tekst” z treścią <code>${esc(base)}?url=</code> i zaraz po niej zmienną „Dane wejściowe skrótu”.</li>
-        <li>Dodaj czynność „Otwórz adresy URL”.</li>
-      </ol>
-      <p class="field-note">Skrót otwiera Doczytania w Safari. Dane w Safari i w aplikacji dodanej do ekranu początkowego są na iPhonie osobne; połącz obie z GitHubem, a będą takie same.</p>
-      <h3>Komputer</h3>
-      <p>Przeciągnij ten przycisk na pasek zakładek: <a class="btn bookmarklet" href="${esc(bookmarklet)}" data-action="bookmarklet">+ Doczytania</a>. Kliknięty na dowolnej stronie zapisuje ją tutaj. Można też wkleić link w pole wyszukiwania.</p>
+      <p><strong>Telefon:</strong> zainstaluj aplikację (Chrome → ⋮ → „Zainstaluj aplikację”), a potem w dowolnej aplikacji wybierz „Udostępnij” → Doczytania.</p>
+      <p><strong>Komputer:</strong> przeciągnij <a class="btn small bookmarklet" href="${esc(bookmarklet)}" data-action="bookmarklet">+ Doczytania</a> na pasek zakładek albo wklej link w pole wyszukiwania.</p>
     </section>
     ${tags.length ? tagsSection(tags) : ''}
     <section>
-      <h2>Kopia danych</h2>
-      <p>Linków: ${total}. Kopia to plik JSON; wczytanie dołącza jego linki do obecnych.</p>
+      <h2>Kopia</h2>
       <div class="row">
-        <button class="btn" type="button" data-action="export">Pobierz kopię</button>
-        <label class="btn file-btn">Wczytaj kopię<input type="file" accept="application/json,.json" data-action="import" hidden></label>
+        <button class="btn" type="button" data-action="export">Pobierz</button>
+        <label class="btn file-btn">Wczytaj<input type="file" accept="application/json,.json" data-action="import" hidden></label>
       </div>
       ${ui.importMsg ? `<p class="field-note" role="status">${esc(ui.importMsg)}</p>` : ''}
     </section>
-    <p class="version">Doczytania · wersja ${VERSION} · <a href="https://github.com/gchrupala/doczytania" target="_blank" rel="noopener">kod</a></p>`;
+    <p class="version">Doczytania ${VERSION} · linków: ${doc.items.length} · <a href="https://github.com/gchrupala/doczytania" target="_blank" rel="noopener">kod</a></p>`;
 }
 
 function tagsSection(tags) {
@@ -547,7 +535,7 @@ function tagsSection(tags) {
     <ul class="tag-list">${tags
       .map(
         ([t, n]) => `<li><span>#${esc(t)} <span class="count">${n}</span></span>
-        <span class="row"><button class="btn small" type="button" data-action="rename-tag" data-value="${esc(t)}">Zmień nazwę</button>
+        <span class="row"><button class="btn small" type="button" data-action="rename-tag" data-value="${esc(t)}">Zmień</button>
         <button class="btn small" type="button" data-action="remove-tag" data-value="${esc(t)}">Usuń</button></span></li>`,
       )
       .join('')}</ul>
@@ -558,35 +546,26 @@ function syncSection() {
   const c = syncConfig;
   const error = c ? c.error : ui.syncError;
   const errorHtml = error ? `<p class="error" role="alert">${esc(SYNC_ERRORS[error] ?? SYNC_ERRORS.bad)}</p>` : '';
-  const head = '<h2>Synchronizacja z GitHubem</h2>';
+  const head = '<h2>Synchronizacja</h2>';
   if (c) {
-    const status = sync.busy ? 'Synchronizuję…' : c.lastSyncAt ? `Ostatnio: ${ago(c.lastSyncAt)}.` : 'Jeszcze nie zsynchronizowano.';
+    const status = sync.busy ? 'Synchronizuję…' : c.lastSyncAt ? `Ostatnio ${ago(c.lastSyncAt)}` : 'Jeszcze nie';
     return `<section>${head}
-      <p>Połączono z <strong>${esc(c.repo)}</strong>, plik <code>${esc(syncPath(c.person))}</code>.</p>
-      <p class="field-note" role="status">${esc(status)}</p>
+      <p>${esc(c.repo)} · ${esc(c.person)}<br><span class="field-note" role="status">${esc(status)}</span></p>
       ${errorHtml}
       <div class="row">
-        <button class="btn" type="button" data-action="sync-now"${sync.busy ? ' disabled' : ''}>Synchronizuj teraz</button>
-        <button class="btn${ui.confirmDisconnect ? ' danger' : ''}" type="button" data-action="sync-off">${ui.confirmDisconnect ? 'Na pewno odłączyć?' : 'Odłącz'}</button>
+        <button class="btn" type="button" data-action="sync-now"${sync.busy ? ' disabled' : ''}>Synchronizuj</button>
+        <button class="btn${ui.confirmDisconnect ? ' danger' : ''}" type="button" data-action="sync-off">${ui.confirmDisconnect ? 'Na pewno?' : 'Odłącz'}</button>
       </div>
-      <p class="field-note">Odłączenie usuwa token z tego urządzenia. Linki zostają tu i w repozytorium.</p>
     </section>`;
   }
-  const fromMyo = ui.syncToken && !ui.syncError ? '<p class="field-note">Formularz wypełniono danymi połączenia z Myo na tym urządzeniu.</p>' : '';
   return `<section>${head}
-    <p class="field-note">Linki trafiają do pliku <code>&lt;imię&gt;/doczytania.json</code> w prywatnym repozytorium, tak jak w Myo. Każde urządzenie połączone z tym samym repozytorium i imieniem ma te same linki.</p>
-    <ol>
-      <li>Prywatne repozytorium, np. <code>app-data</code>: <a href="https://github.com/new?name=app-data&amp;visibility=private" target="_blank" rel="noopener">github.com/new</a> (albo istniejące).</li>
-      <li>Token z uprawnieniem „Contents: Read and write” do tego repozytorium: <a href="https://github.com/settings/personal-access-tokens/new?name=Doczytania&amp;description=Doczytania+sync&amp;expires_in=366&amp;contents=write" target="_blank" rel="noopener">github.com/settings/personal-access-tokens</a>. Może być ten sam co w Myo.</li>
-      <li>Wpisz poniżej repozytorium, imię i token.</li>
-    </ol>
-    ${fromMyo}
+    <p class="field-note">Prywatne repozytorium GitHub, jak w Myo. Token może być ten sam.</p>
     <form id="sync-form" class="edit" novalidate>
       <label for="sync-repo">Repozytorium</label>
       <input id="sync-repo" type="text" placeholder="właściciel/nazwa" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(ui.syncRepo ?? DEFAULT_SYNC_REPO)}">
       <label for="sync-person">Imię</label>
       <input id="sync-person" type="text" placeholder="np. Grzegorz" autocomplete="off" spellcheck="false" value="${esc(ui.syncPerson ?? '')}">
-      <label for="sync-token">Token</label>
+      <label for="sync-token">Token <a class="label-link" href="https://github.com/settings/personal-access-tokens/new?name=Doczytania&amp;description=Doczytania+sync&amp;expires_in=366&amp;contents=write" target="_blank" rel="noopener">utwórz</a></label>
       <input id="sync-token" class="token" type="text" placeholder="github_pat_…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(ui.syncToken ?? '')}">
       ${errorHtml}
       <button class="btn primary wide" type="submit"${ui.syncConnecting ? ' disabled' : ''}>${ui.syncConnecting ? 'Łączę…' : 'Połącz'}</button>

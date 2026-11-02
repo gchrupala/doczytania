@@ -6,7 +6,7 @@ Adres: https://grzegorz.chrupala.me/doczytania/ (GitHub Pages; `gchrupala.github
 
 ## Co robi
 
-- **Dodawanie.** Android: po instalacji Doczytania są na liście „Udostępnij” w każdej aplikacji. Komputer: przycisk „+ Doczytania” na pasku zakładek (instrukcja w ustawieniach) albo wklejenie linku w pole wyszukiwania. iPhone: skrót w aplikacji Skróty (instrukcja w ustawieniach), bo Safari nie pozwala stronom odbierać udostępnień. Po udostępnieniu otwiera się okno z tytułem, tagami i notatką; można je od razu zamknąć.
+- **Dodawanie.** Android: po instalacji Doczytania są na liście „Udostępnij” w każdej aplikacji. Komputer: przycisk „+ Doczytania” na pasku zakładek (instrukcja w ustawieniach) albo wklejenie linku w pole wyszukiwania. Po udostępnieniu otwiera się okno z tytułem, tagami i notatką; można je od razu zamknąć.
 - **Porządkowanie.** Rodzaj linku (artykuł, blog, publikacja, PDF, wideo, podcast, wpis, książka) aplikacja zgaduje z adresu; można go zmienić. Tagi wpisuje się ręcznie, a wcześniej użyte podpowiada. Zakładki „Do przeczytania”, „Przeczytane”, „Wszystkie” i filtry według rodzaju i tagu.
 - **Szukanie.** Po tytule, adresie, opisie, autorze, tagach, notatce i początku tekstu strony; bez rozróżniania wielkich liter i polskich znaków („lodz” znajdzie „Łódź”). `#tag` w polu szukania zawęża do tagu.
 - **Duplikaty.** Ten sam link dodany drugi raz (także z innymi parametrami śledzącymi, z `www.` albo bez) nie tworzy nowej pozycji, tylko wraca do „Do przeczytania”. Parametry śledzące (`utm_…`, `fbclid` itp.) są usuwane z adresu.
@@ -44,6 +44,5 @@ npm test    # testy logiki (Node 18+)
 
 ## Ograniczenia
 
-- iPhone: bez odbierania udostępnień; skrót otwiera Safari, którego dane są osobne od aplikacji na ekranie początkowym (synchronizacja je wyrównuje).
 - Strony za logowaniem lub blokujące serwery (część serwisów informacyjnych, X/Twitter) nie dadzą opisu; zostaje adres i tytuł z udostępnienia.
 - Synchronizacja nie działa w podglądzie na claude.ai (blokada połączeń z GitHubem).
