@@ -3,8 +3,9 @@
 // Bump VERSION with every change to the app files. The browser then installs
 // this worker again with the new files, and the page reloads into them
 // (see the controllerchange handler in js/app.js).
-const VERSION = 'v2';
-const APP_CACHE = `doczytania-app-${VERSION}`;
+const VERSION = 'v3';
+const PREFIX = 'doczytania-app-';
+const APP_CACHE = `${PREFIX}${VERSION}`;
 const APP_FILES = [
   './',
   'index.html',
@@ -28,11 +29,13 @@ self.addEventListener('install', (event) => {
   );
 });
 
+// Other apps on the same site (gchrupala.github.io) share the cache
+// storage, so only old caches of this app go.
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== APP_CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith(PREFIX) && k !== APP_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
