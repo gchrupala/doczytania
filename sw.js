@@ -3,7 +3,7 @@
 // Bump VERSION with every change to the app files. The browser then installs
 // this worker again with the new files, and the page reloads into them
 // (see the controllerchange handler in js/app.js).
-const VERSION = 'v3';
+const VERSION = 'v4';
 const PREFIX = 'doczytania-app-';
 const APP_CACHE = `${PREFIX}${VERSION}`;
 const APP_FILES = [
@@ -11,6 +11,7 @@ const APP_FILES = [
   'index.html',
   'styles.css',
   'js/app.js',
+  'js/reader.js',
   'js/store.js',
   'js/sync.js',
   'manifest.webmanifest',
@@ -30,7 +31,8 @@ self.addEventListener('install', (event) => {
 });
 
 // Other apps on the same site (gchrupala.github.io) share the cache
-// storage, so only old caches of this app go.
+// storage, so only old caches of this app go. The caches of PDF files and
+// texts (doczytania-files, -texts, -share, see js/app.js) stay.
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
@@ -55,8 +57,44 @@ async function staleWhileRevalidate(request, key) {
   return (await network) || Response.error();
 }
 
+// Sharing from other apps (share_target in the manifest) posts the form
+// here. A file is kept in the cache and the page opens with ?file=<key>; a
+// link goes on as ?url=&title=&text=, as from the bookmarklet.
+const SHARE_CACHE = 'doczytania-share';
+
+async function receiveShare(request) {
+  const scope = self.registration.scope;
+  try {
+    const form = await request.formData();
+    const file = form.getAll('file').find((f) => typeof f === 'object' && f.size > 0);
+    if (file) {
+      const key = `${Date.now()}`;
+      const cache = await caches.open(SHARE_CACHE);
+      await cache.put(
+        new URL(`shared/${key}`, scope).href,
+        new Response(file, {
+          headers: { 'Content-Type': file.type || 'application/pdf', 'X-File-Name': encodeURIComponent(file.name || '') },
+        }),
+      );
+      return Response.redirect(`${scope}?file=${key}`, 303);
+    }
+    const params = new URLSearchParams();
+    for (const k of ['url', 'title', 'text']) {
+      const v = form.get(k);
+      if (typeof v === 'string' && v) params.set(k, v);
+    }
+    return Response.redirect(`${scope}?${params}`, 303);
+  } catch {
+    return Response.redirect(scope, 303);
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+  if (request.method === 'POST' && new URL(request.url).href === new URL('share', self.registration.scope).href) {
+    event.respondWith(receiveShare(request));
+    return;
+  }
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;

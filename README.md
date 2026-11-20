@@ -9,6 +9,7 @@ Adres: https://grzegorz.chrupala.me/doczytania/ (GitHub Pages; `gchrupala.github
 - **Dodawanie.** Android: po instalacji Doczytania są na liście „Udostępnij” w każdej aplikacji. Komputer: przycisk „+ Doczytania” na pasku zakładek (instrukcja w ustawieniach) albo wklejenie linku w pole wyszukiwania. Po udostępnieniu otwiera się okno z tytułem, tagami i notatką; można je od razu zamknąć.
 - **Porządkowanie.** Rodzaj linku (artykuł, blog, publikacja, PDF, wideo, podcast, wpis, książka) aplikacja zgaduje z adresu; można go zmienić. Tagi wpisuje się ręcznie, a wcześniej użyte podpowiada. Zakładki „Do przeczytania”, „Przeczytane”, „Wszystkie” i filtry według rodzaju i tagu.
 - **Szukanie.** Po tytule, adresie, opisie, autorze, tagach, notatce i początku tekstu strony; bez rozróżniania wielkich liter i polskich znaków („lodz” znajdzie „Łódź”). `#tag` w polu szukania zawęża do tagu.
+- **PDF-y do czytania na telefonie.** Plik PDF można udostępnić do Doczytań (Android), dodać przyciskiem z kartką u góry albo przeciągnąć na listę (komputer). Z PDF-a, także z linku do PDF-a albo do arXiv, GitHub robi tekst, który dopasowuje się do szerokości ekranu (przycisk „Czytaj”). Tekst ma nagłówki, listy i tabele, ale nie ma rysunków i wzorów. Raz otwarty działa bez internetu, a aplikacja pamięta, gdzie skończyło się czytanie. Wymaga synchronizacji.
 - **Duplikaty.** Ten sam link dodany drugi raz (także z innymi parametrami śledzącymi, z `www.` albo bez) nie tworzy nowej pozycji, tylko wraca do „Do przeczytania”. Parametry śledzące (`utm_…`, `fbclid` itp.) są usuwane z adresu.
 
 ## Synchronizacja z GitHubem
@@ -20,6 +21,15 @@ Aplikacja synchronizuje po otwarciu, po powrocie do niej, kilka sekund po zmiani
 ### Opisy stron
 
 Przeglądarka nie może pobierać cudzych stron (blokada CORS), więc tytuł, opis, autora, liczbę słów (czas czytania) i początek tekstu pobiera GitHub Action w repozytorium z danymi: `.github/workflows/doczytania-metadata.yml` w `app-data`. Uruchamia się po każdej synchronizacji i raz dziennie (ponowne próby nieudanych stron). Używa [trafilatura](https://github.com/adbar/trafilatura) do stron i pypdf do PDF-ów. Wynik zapisuje w polu `meta` linku; aplikacja ma go po następnej synchronizacji (sama sprawdza kilka razy w ciągu kilku minut po dodaniu linku). Bez tej akcji aplikacja działa, tylko bez opisów.
+
+### Tekst z PDF-ów
+
+Ta sama akcja zamienia PDF-y na tekst do czytania ([pymupdf4llm](https://github.com/pymupdf/pymupdf4llm), Markdown): pliki dodane w aplikacji, linki do PDF-ów i linki do arXiv. Pliki leżą obok danych:
+
+- `<imię>/doczytania/<id>.pdf`: plik wysłany z aplikacji (najpierw plik, potem dane, więc akcja widzi oba),
+- `<imię>/doczytania/<id>.md`: tekst; ścieżka, liczba słów i stron są w `meta.reflow` linku.
+
+Aplikacja pobiera tekst przez API GitHuba przy pierwszym otwarciu i trzyma go w pamięci przeglądarki. Po usunięciu linku akcja usuwa też jego pliki.
 
 ## GitHub Pages
 
@@ -37,12 +47,15 @@ npm test    # testy logiki (Node 18+)
 | `index.html`, `styles.css` | strona i wygląd (jasny i ciemny motyw) |
 | `manifest.webmanifest` | instalacja i `share_target` (odbieranie udostępnień na Androidzie) |
 | `js/store.js` | model danych: dodawanie, adresy, rodzaje, tagi, wyszukiwanie, łączenie kopii |
-| `js/sync.js` | synchronizacja z plikiem w repozytorium GitHub |
+| `js/sync.js` | synchronizacja z plikiem w repozytorium GitHub, wysyłanie PDF-ów i pobieranie tekstów |
+| `js/reader.js` | Markdown → HTML w widoku czytania (tylko to, co pisze pymupdf4llm; reszta jest escapowana) |
 | `js/app.js` | widoki i obsługa zdarzeń |
-| `sw.js` | praca bez internetu |
-| `test/` | testy `node --test` dla `store.js` i `sync.js` |
+| `sw.js` | praca bez internetu, odbieranie udostępnionych plików |
+| `test/` | testy `node --test` dla `store.js`, `sync.js` i `reader.js` |
 
 ## Ograniczenia
 
 - Strony za logowaniem lub blokujące serwery (część serwisów informacyjnych, X/Twitter) nie dadzą opisu; zostaje adres i tytuł z udostępnienia.
 - Synchronizacja nie działa w podglądzie na claude.ai (blokada połączeń z GitHubem).
+- Tekst z PDF-a: bez rysunków i wzorów, z podpisami rysunków czasem w środku akapitu. Skany bez warstwy tekstowej nie dadzą tekstu (akcja nie robi OCR). Pliki do 40 MB; zostają w repozytorium z danymi.
+- Odbieranie plików PDF z „Udostępnij” na Androidzie działa po aktualizacji zainstalowanej aplikacji przez Chrome (zwykle w ciągu doby); można też odinstalować i zainstalować ją ponownie.

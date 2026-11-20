@@ -55,14 +55,27 @@ export function parsePerson(input) {
 // The data file of a person (a name from parsePerson).
 export const syncPath = (person) => `${person}/${SYNC_FILE}`;
 
+// A PDF sent from the app (ext 'pdf') or its text from the Action ('md').
+export const filePath = (person, id, ext) => `${person}/doczytania/${id}.${ext}`;
+
 // A path in the repository, for an address: each part encoded.
 const encodePath = (path) => path.split('/').map(encodeURIComponent).join('/');
+
+// Where a file in the repository can be opened on github.com.
+export const fileWebUrl = (repo, path) => `https://github.com/${repo}/blob/HEAD/${encodePath(path)}`;
 
 // UTF-8 text <-> base64, which the contents API uses.
 export function toBase64(text) {
   const bytes = new TextEncoder().encode(text);
   let binary = '';
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+export function bytesToBase64(bytes) {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let binary = '';
+  for (let i = 0; i < view.length; i += 0x8000) binary += String.fromCharCode(...view.subarray(i, i + 0x8000));
   return btoa(binary);
 }
 
@@ -77,7 +90,8 @@ export function gitHubRemote({ repo, token, path, fetch: fetchFn = (...a) => glo
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
   };
-  const fileUrl = `${API}/repos/${repo}/contents/${encodePath(path)}`;
+  const contentsUrl = (p) => `${API}/repos/${repo}/contents/${encodePath(p)}`;
+  const fileUrl = contentsUrl(path);
 
   // no-store: a cached GET would return an old sha right after a push.
   async function call(url, options = {}) {
@@ -133,6 +147,26 @@ export function gitHubRemote({ repo, token, path, fetch: fetchFn = (...a) => glo
       });
       if (!res.ok) fail(res);
       return (await res.json()).content?.sha ?? null;
+    },
+
+    // Another file of the repository as text (the text of a PDF).
+    async readText(p) {
+      const res = await call(contentsUrl(p), { headers: { Accept: 'application/vnd.github.raw+json' } });
+      if (!res.ok) fail(res);
+      return res.text();
+    },
+
+    // Sends a new file (a PDF). A file that is already there counts as sent:
+    // an earlier attempt may have got through without an answer.
+    async putFile(p, bytes, message) {
+      const res = await call(contentsUrl(p), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, content: bytesToBase64(bytes) }),
+      });
+      if (res.ok) return;
+      if (res.status === 422 && (await call(contentsUrl(p))).ok) return;
+      fail(res);
     },
   };
 }

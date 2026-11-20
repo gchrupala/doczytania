@@ -207,3 +207,50 @@ test('renaming and removing tags', () => {
   S.renameTag(doc, 'nlp', '', min(2));
   assert.deepEqual(doc.items[0].tags, ['uczenie maszynowe']);
 });
+
+test('a PDF file is added once, keeps its address and shows its name until there is a title', () => {
+  const doc = S.emptyDoc();
+  const sha256 = 'a'.repeat(64);
+  const fileUrl = (id) => `https://github.com/o/r/blob/main/ja/doczytania/${id}.pdf`;
+  const { item, existed } = S.addFile(doc, { name: 'raport.pdf', size: 1234, sha256 }, fileUrl, T0, rnd);
+  assert.equal(existed, false);
+  assert.equal(item.url, fileUrl(item.id));
+  assert.deepEqual(item.file, { name: 'raport.pdf', size: 1234, sha256 });
+  assert.equal(S.titleOf(item), 'raport.pdf');
+  assert.equal(S.kindOf(item), 'pdf');
+  assert.ok(S.waitingForText(item));
+  S.toggleRead(doc, item.id, min(1));
+  const again = S.addFile(doc, { name: 'kopia.pdf', size: 1234, sha256 }, fileUrl, min(2), rnd);
+  assert.equal(again.existed, true);
+  assert.equal(doc.items.length, 1);
+  assert.equal(doc.items[0].status, 'unread');
+  S.updateItem(doc, item.id, { url: 'https://example.com/inny' }, min(3));
+  assert.equal(doc.items[0].url, fileUrl(item.id));
+  assert.equal(S.filterItems(doc.items, { query: 'raport' }).length, 1);
+});
+
+test('the text of a PDF from the Action is read, merged by fetchedAt and gives the reading time', () => {
+  const base = { id: 'p1', url: 'https://arxiv.org/abs/2604.10333', title: '', status: 'unread', addedAt: T0, updatedAt: T0 };
+  const withText = {
+    ...base,
+    meta: { fetchedAt: min(5), title: 'Artykuł', reflow: { path: 'ja/doczytania/p1.md', words: 22000, pages: 60, at: min(5) } },
+  };
+  const parsed = S.parseDoc({ items: [withText] }).items[0];
+  assert.deepEqual(S.textOf(parsed), { path: 'ja/doczytania/p1.md', words: 22000, pages: 60, at: min(5) });
+  assert.equal(S.readingMinutes(parsed), 100);
+  assert.equal(S.waitingForText(parsed), false);
+  // A device without the text yet, with a newer edit: the edit and the text both stay.
+  const edited = { ...base, title: 'Mój tytuł', updatedAt: min(6), meta: { fetchedAt: min(1), title: 'Artykuł' } };
+  const merged = S.mergeDocs({ items: [edited] }, { items: [withText] }).items[0];
+  assert.equal(merged.title, 'Mój tytuł');
+  assert.equal(S.textOf(merged).path, 'ja/doczytania/p1.md');
+  // A failed attempt is kept, but there is no text; broken values are dropped.
+  const failed = S.parseDoc({ items: [{ ...base, meta: { fetchedAt: min(5), reflow: { error: 'HTTPError: 403', attempts: 1, at: min(5) } } }] }).items[0];
+  assert.equal(S.textOf(failed), null);
+  assert.equal(failed.meta.reflow.error, 'HTTPError: 403');
+  const broken = S.parseDoc({ items: [{ ...base, meta: { fetchedAt: min(5), reflow: { path: '../x', at: min(5) } }, file: { size: 3 } }] }).items[0];
+  assert.equal(broken.meta.reflow, undefined);
+  assert.equal(broken.file, undefined);
+  assert.ok(S.waitingForText(broken));
+  assert.equal(S.waitingForText({ ...base, url: 'https://example.com/post' }), false);
+});

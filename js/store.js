@@ -8,9 +8,13 @@
 //   id, url, title (typed or shared, may be ''), note, tags [string],
 //   kind ('' = guessed from the address), status ('unread' | 'read'),
 //   addedAt, updatedAt, readAt (ms or null),
+//   file (optional, a PDF sent from this app): { name, size, sha256 }; its
+//     url is then the address of the file in the data repository,
 //   meta (optional, filled in by the GitHub Action in the data repository):
 //     { fetchedAt, title, description, site, author, date, lang, words,
-//       excerpt, kind, error }
+//       excerpt, kind, error,
+//       reflow: the text of a PDF for reading, { path, words, pages, at } or
+//               { error, attempts, at } }
 
 export const DOC_VERSION = 1;
 export const STORAGE_KEY = 'doczytania:v1';
@@ -141,7 +145,7 @@ export function parseTags(input) {
 
 // ---------- titles and descriptions for display ----------
 
-export const titleOf = (item) => item.title || item.meta?.title || prettyUrl(item.url);
+export const titleOf = (item) => item.title || item.meta?.title || item.file?.name || prettyUrl(item.url);
 export const descriptionOf = (item) => item.meta?.description || '';
 
 export function prettyUrl(url) {
@@ -156,8 +160,27 @@ export function prettyUrl(url) {
 
 // Minutes of reading at 220 words per minute, or null when not known.
 export function readingMinutes(item) {
-  const w = item.meta?.words;
+  const w = textOf(item)?.words ?? item.meta?.words;
   return Number.isFinite(w) && w > 0 ? Math.max(1, Math.round(w / 220)) : null;
+}
+
+// The text of a PDF for reading in the app (from the Action), or null.
+export const textOf = (item) => (item.meta?.reflow?.path ? item.meta.reflow : null);
+
+// A PDF is waiting for its text: sent as a file, or a PDF link or arXiv,
+// with no text and no failed attempt yet.
+export function waitingForText(item) {
+  if (item.meta?.reflow) return false;
+  if (item.file) return true;
+  return /\.pdf$/i.test(safePath(item.url)) || /(^|\.)arxiv\.org$/.test(domainOf(item.url)) || item.meta?.kind === 'pdf';
+}
+
+function safePath(url) {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return '';
+  }
 }
 
 // ---------- changes ----------
@@ -202,6 +225,33 @@ export function addItem(doc, { url, title = '', note = '', tags = [], kind = '' 
   return { item, existed: false };
 }
 
+// Adds a PDF file. fileUrl(id) gives the address of the file in the data
+// repository. The same file (by its SHA-256) is not added twice: the saved
+// one comes back to unread. Returns { item, existed }.
+export function addFile(doc, { name, size, sha256, title = '' }, fileUrl, now, random) {
+  const existing = doc.items.find((i) => i.file?.sha256 && i.file.sha256 === sha256);
+  if (existing) {
+    updateItem(doc, existing.id, { status: 'unread' }, now);
+    return { item: existing, existed: true };
+  }
+  const id = newId(now, random);
+  const item = {
+    id,
+    url: cleanUrl(fileUrl(id)),
+    title: String(title ?? '').trim().slice(0, 300),
+    note: '',
+    tags: [],
+    kind: '',
+    status: 'unread',
+    addedAt: now,
+    updatedAt: now,
+    readAt: null,
+    file: parseFile({ name, size, sha256 }),
+  };
+  doc.items.push(item);
+  return { item, existed: false };
+}
+
 // Changes the fields in patch that differ; stamps updatedAt when anything
 // changed. Returns the item or null.
 export function updateItem(doc, id, patch, now) {
@@ -212,7 +262,8 @@ export function updateItem(doc, id, patch, now) {
   if ('note' in patch) next.note = String(patch.note ?? '').slice(0, MAX_TEXT);
   if ('tags' in patch) next.tags = parseTags(patch.tags);
   if ('kind' in patch) next.kind = KINDS.includes(patch.kind) ? patch.kind : '';
-  if ('url' in patch) next.url = cleanUrl(patch.url) ?? item.url;
+  // A sent file keeps its address: it is where the file is.
+  if ('url' in patch && !item.file) next.url = cleanUrl(patch.url) ?? item.url;
   if ('status' in patch && STATUSES.includes(patch.status)) {
     next.status = patch.status;
     next.readAt = patch.status === 'read' ? (item.status === 'read' ? item.readAt : now) : null;
@@ -289,7 +340,7 @@ export function fold(s) {
 function haystack(item) {
   const m = item.meta ?? {};
   return fold(
-    [item.title, item.url, domainOf(item.url), item.note, item.tags.join(' '), m.title, m.description, m.site, m.author, m.excerpt]
+    [item.title, item.url, domainOf(item.url), item.file?.name, item.note, item.tags.join(' '), m.title, m.description, m.site, m.author, m.excerpt]
       .filter(Boolean)
       .join(' \n '),
   );
@@ -329,6 +380,25 @@ function parseMeta(m) {
   }
   if (Number.isFinite(m.words)) out.words = m.words;
   if (Number.isFinite(m.attempts)) out.attempts = m.attempts;
+  const reflow = parseReflow(m.reflow);
+  if (reflow) out.reflow = reflow;
+  return out;
+}
+
+function parseReflow(r) {
+  if (!isObj(r) || !Number.isFinite(r.at)) return undefined;
+  const out = { at: r.at };
+  if (typeof r.path === 'string' && r.path && !r.path.includes('..')) out.path = r.path.slice(0, 300);
+  if (typeof r.error === 'string' && r.error) out.error = r.error.slice(0, 300);
+  for (const k of ['words', 'pages', 'attempts']) if (Number.isFinite(r[k])) out[k] = r[k];
+  return out.path || out.error ? out : undefined;
+}
+
+function parseFile(f) {
+  if (!isObj(f) || typeof f.name !== 'string') return undefined;
+  const out = { name: f.name.slice(0, 200) || 'plik.pdf' };
+  if (Number.isFinite(f.size)) out.size = f.size;
+  if (typeof f.sha256 === 'string' && /^[0-9a-f]{64}$/.test(f.sha256)) out.sha256 = f.sha256;
   return out;
 }
 
@@ -349,6 +419,8 @@ function parseItem(x) {
     updatedAt: num(x.updatedAt) ?? addedAt,
     readAt: x.status === 'read' ? num(x.readAt) : null,
   };
+  const file = parseFile(x.file);
+  if (file) item.file = file;
   const meta = parseMeta(x.meta);
   if (meta) item.meta = meta;
   return item;
@@ -472,5 +544,5 @@ export function stableJson(value) {
   return JSON.stringify(value);
 }
 
-// Links still waiting for page data from the Action.
-export const waitingForMeta = (doc) => doc.items.some((i) => !i.meta);
+// Links still waiting for page data or a text from the Action.
+export const waitingForMeta = (doc) => doc.items.some((i) => !i.meta || waitingForText(i));

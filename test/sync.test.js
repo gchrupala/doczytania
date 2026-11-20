@@ -1,7 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as S from '../js/store.js';
-import { fromBase64, gitHubRemote, parsePerson, parseRepo, SyncError, syncOnce, syncPath, toBase64 } from '../js/sync.js';
+import {
+  bytesToBase64,
+  filePath,
+  fileWebUrl,
+  fromBase64,
+  gitHubRemote,
+  parsePerson,
+  parseRepo,
+  SyncError,
+  syncOnce,
+  syncPath,
+  toBase64,
+} from '../js/sync.js';
 
 const T0 = new Date(2026, 10, 2, 12, 0, 0).getTime();
 const min = (n) => T0 + n * 60000;
@@ -104,4 +116,36 @@ test('the GitHub remote: errors by status, private repositories only, pushes wit
   assert.equal(body.sha, 'old');
   assert.equal(JSON.parse(fromBase64(body.content)).doczytania, 1);
   assert.equal(calls.at(-1).options.headers.Authorization, 'Bearer t');
+});
+
+test('PDF files: paths, upload as base64, a file already there counts as sent, texts read raw', async () => {
+  assert.equal(filePath('grzegorz-chrupała', 'abc-123', 'pdf'), 'grzegorz-chrupała/doczytania/abc-123.pdf');
+  assert.equal(
+    fileWebUrl('o/r', 'grzegorz-chrupała/doczytania/abc-123.pdf'),
+    'https://github.com/o/r/blob/HEAD/grzegorz-chrupa%C5%82a/doczytania/abc-123.pdf',
+  );
+  const calls = [];
+  const responses = [];
+  const fetch = async (url, options) => {
+    calls.push({ url, options });
+    const [status, body] = responses.shift();
+    return { ok: status < 300, status, json: async () => body, text: async () => body };
+  };
+  const remote = gitHubRemote({ repo: 'o/r', token: 't', path: 'ja/doczytania.json', fetch });
+  const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0xff, 0x00]);
+  responses.push([201, {}]);
+  await remote.putFile('ja/doczytania/x.pdf', bytes, 'msg');
+  assert.equal(calls.at(-1).options.method, 'PUT');
+  assert.equal(JSON.parse(calls.at(-1).options.body).content, bytesToBase64(bytes));
+  assert.equal(atob(bytesToBase64(bytes)).charCodeAt(5), 0xff);
+  responses.push([422, {}], [200, {}]);
+  await remote.putFile('ja/doczytania/x.pdf', bytes, 'msg');
+  responses.push([422, {}], [404, {}]);
+  await assert.rejects(remote.putFile('ja/doczytania/x.pdf', bytes, 'msg'), (e) => e.kind === 'conflict');
+  responses.push([200, '# Tytuł\n']);
+  assert.equal(await remote.readText('ja/doczytania/x.md'), '# Tytuł\n');
+  assert.equal(calls.at(-1).options.headers.Accept, 'application/vnd.github.raw+json');
+  assert.match(calls.at(-1).url, /contents\/ja\/doczytania\/x\.md$/);
+  responses.push([404, {}]);
+  await assert.rejects(remote.readText('ja/doczytania/y.md'), (e) => e.kind === 'notFound');
 });

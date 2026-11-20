@@ -1,10 +1,11 @@
 // User interface: renders the views from the document in store.js and
 // handles input, links shared from other apps and sync.
 
+import { dropTitle, renderMarkdown } from './reader.js';
 import * as S from './store.js';
-import { gitHubRemote, parsePerson, parseRepo, syncOnce, syncPath } from './sync.js';
+import { filePath, fileWebUrl, gitHubRemote, parsePerson, parseRepo, syncOnce, syncPath } from './sync.js';
 
-const VERSION = '2';
+const VERSION = '3';
 
 const KIND_ONE = {
   article: 'Artykuł',
@@ -40,6 +41,8 @@ const ICON = {
   back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>',
   search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>',
   close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v5h5M12 11v6M9 14h6"/></svg>',
+  book: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.5 5 8 4.5 4 4.5v13c4 0 6.5.5 8 2 1.5-1.5 4-2 8-2v-13c-4 0-6.5.5-8 2Z"/><path d="M12 6.5v13"/></svg>',
 };
 
 const storage = openStorage();
@@ -47,10 +50,10 @@ let doc = S.loadDoc(storage);
 let saveFailed = !storage;
 
 const PREFS_KEY = 'doczytania:prefs';
-const prefs = { status: 'unread', kind: '', tag: '', ...readJson(PREFS_KEY) };
+const prefs = { status: 'unread', kind: '', tag: '', readerSize: 2, ...readJson(PREFS_KEY) };
 
 const ui = {
-  view: 'list', // 'list' | 'settings'
+  view: 'list', // 'list' | 'settings' | 'reader'
   query: '',
   editId: null,
   editIntro: '', // text above the edit form, e.g. after sharing
@@ -63,6 +66,11 @@ const ui = {
   syncError: null,
   syncConnecting: false,
   importMsg: '',
+  readerId: null, // the link whose text is open
+  readerFor: null, // which text is being loaded (textKey)
+  readerHtml: null,
+  readerError: null,
+  listScroll: 0,
 };
 
 const app = document.getElementById('app');
@@ -155,6 +163,8 @@ async function syncNow() {
   render();
   let result = { error: null };
   try {
+    // Files first: the Action starts when the data file changes.
+    await uploadPending(config);
     await syncOnce({
       remote: remoteFor(config),
       getLocal: () => doc,
@@ -256,8 +266,11 @@ function ago(ms, now = Date.now()) {
 
 function render() {
   const focus = rememberFocus();
-  document.title = ui.view === 'settings' ? 'Ustawienia — Doczytania' : 'Doczytania';
-  app.innerHTML = ui.view === 'settings' ? settingsView() : listView();
+  if (ui.view === 'reader' && !readerItem()) ui.view = 'list'; // deleted on another device
+  document.title =
+    ui.view === 'settings' ? 'Ustawienia — Doczytania' : ui.view === 'reader' ? `${S.titleOf(readerItem())} — Doczytania` : 'Doczytania';
+  if (ui.view === 'reader') renderReader();
+  else app.innerHTML = ui.view === 'settings' ? settingsView() : listView();
   renderSheet();
   renderToast();
   restoreFocus(focus);
@@ -306,7 +319,7 @@ function notices() {
 function listView() {
   return `<header class="bar">
       <h1>Doczytania</h1>
-      <div class="bar-actions">${syncButton()}<button class="icon-btn" type="button" data-action="settings" aria-label="Ustawienia" title="Ustawienia">${ICON.gear}</button></div>
+      <div class="bar-actions">${syncButton()}<button class="icon-btn" type="button" data-action="pick-pdf" title="Dodaj plik PDF" aria-label="Dodaj plik PDF">${ICON.file}</button><button class="icon-btn" type="button" data-action="settings" aria-label="Ustawienia" title="Ustawienia">${ICON.gear}</button></div>
     </header>
     ${notices()}
     <form class="search" id="search-form" role="search">
@@ -374,7 +387,7 @@ function renderResults() {
 function itemView(item) {
   const kind = S.kindOf(item);
   const minutes = S.readingMinutes(item);
-  const site = item.meta?.site || S.domainOf(item.url);
+  const site = item.file ? 'Plik' : item.meta?.site || S.domainOf(item.url);
   const info = [esc(site), KIND_ONE[kind], minutes ? `${minutes} min` : '', esc(ago(item.addedAt))].filter(Boolean).join(' · ');
   const desc = S.descriptionOf(item);
   const read = item.status === 'read';
@@ -389,9 +402,21 @@ function itemView(item) {
       ${desc ? `<p class="item-desc">${esc(desc)}</p>` : ''}
       ${item.note ? `<p class="item-note">${esc(item.note)}</p>` : ''}
       ${tags}
+      ${textButton(item)}
     </div>
     <button type="button" class="icon-btn small edit" data-action="edit" aria-label="Edytuj" title="Edytuj">${ICON.edit}</button>
   </li>`;
+}
+
+// "Read" for a PDF with a text; for a sent file, where its text is.
+function textButton(item) {
+  if (S.textOf(item)) {
+    return `<button type="button" class="btn small read-text" data-action="reader">${ICON.book} Czytaj</button>`;
+  }
+  if (!item.file) return '';
+  if (pendingFiles.has(item.id)) return '<p class="item-state">Plik czeka na wysłanie do GitHuba.</p>';
+  if (item.meta?.reflow?.error) return '<p class="item-state">Nie udało się przygotować tekstu.</p>';
+  return '<p class="item-state">GitHub przygotowuje tekst…</p>';
 }
 
 function emptyHelp() {
@@ -425,22 +450,42 @@ function renderSheet() {
         .join('')}</div>`
     : '';
   const meta = item.meta;
+  const waitingText = S.waitingForText(item) && syncConfig;
   const page = meta
     ? meta.error
       ? `<p class="field-note">Nie udało się pobrać opisu strony (${esc(meta.error)}).</p>`
-      : `<p class="field-note">Opis strony pobrany ${esc(ago(meta.fetchedAt))}${meta.title && meta.title !== item.title ? `: „${esc(meta.title)}”` : ''}.</p>`
+      : `<p class="field-note">${item.file ? 'Opis pliku' : 'Opis strony'} pobrany ${esc(ago(meta.fetchedAt))}${meta.title && meta.title !== item.title ? `: „${esc(meta.title)}”` : ''}.</p>`
     : syncConfig
-      ? '<p class="field-note">Tytuł, opis i czas czytania pojawią się po synchronizacji, gdy GitHub pobierze stronę.</p>'
+      ? waitingText
+        ? '<p class="field-note">Tytuł i tekst do czytania pojawią się po synchronizacji, gdy GitHub przetworzy PDF.</p>'
+        : '<p class="field-note">Tytuł, opis i czas czytania pojawią się po synchronizacji, gdy GitHub pobierze stronę.</p>'
       : '';
+  const text = S.textOf(item);
+  const reflow = meta?.reflow;
+  const textNote = text
+    ? `<p class="field-note">Tekst do czytania: ${[text.pages ? `${text.pages} str.` : '', S.readingMinutes(item) ? `${S.readingMinutes(item)} min` : ''].filter(Boolean).join(', ')}. <button type="button" class="link" data-action="reader">Czytaj</button></p>`
+    : reflow?.error
+      ? `<p class="field-note">Nie udało się przygotować tekstu z PDF-a (${esc(reflow.error)}).</p>`
+      : waitingText && meta
+        ? '<p class="field-note">Tekst do czytania pojawi się po synchronizacji, gdy GitHub przetworzy PDF.</p>'
+        : '';
+  const link = item.file
+    ? `<a class="sheet-link" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">Plik: ${esc(item.file.name)}${item.file.size ? ` (${esc(sizeText(item.file.size))})` : ''}</a>`
+    : `<a class="sheet-link" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">${esc(S.prettyUrl(item.url))}</a>`;
+  const urlField = item.file
+    ? ''
+    : `<label for="f-url">Adres</label>
+    <input id="f-url" name="url" type="url" value="${esc(item.url)}" autocapitalize="off" spellcheck="false">`;
   sheet.innerHTML = `<form method="dialog" id="edit-form" class="edit">
     <div class="sheet-head">
       <h2>${ui.editIntro ? esc(ui.editIntro) : 'Edycja'}</h2>
       <button type="button" class="icon-btn small" data-action="sheet-close" aria-label="Zamknij">${ICON.close}</button>
     </div>
-    <a class="sheet-link" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">${esc(S.prettyUrl(item.url))}</a>
+    ${link}
     ${page}
+    ${textNote}
     <label for="f-title">Tytuł</label>
-    <input id="f-title" name="title" type="text" value="${esc(item.title)}" placeholder="${esc(meta?.title || S.prettyUrl(item.url))}">
+    <input id="f-title" name="title" type="text" value="${esc(item.title)}" placeholder="${esc(meta?.title || item.file?.name || S.prettyUrl(item.url))}">
     <label for="f-tags">Tagi <span class="hint">(oddzielone przecinkami)</span></label>
     <input id="f-tags" name="tags" type="text" value="${esc(item.tags.join(', '))}" autocapitalize="off" spellcheck="false">
     ${suggestions}
@@ -448,8 +493,7 @@ function renderSheet() {
     <select id="f-kind" name="kind">${kinds}</select>
     <label for="f-note">Notatka</label>
     <textarea id="f-note" name="note" rows="3">${esc(item.note)}</textarea>
-    <label for="f-url">Adres</label>
-    <input id="f-url" name="url" type="url" value="${esc(item.url)}" autocapitalize="off" spellcheck="false">
+    ${urlField}
     <label class="check-row"><input type="checkbox" name="read"${item.status === 'read' ? ' checked' : ''}> Przeczytane</label>
     <div class="sheet-actions">
       <button type="button" class="btn${ui.confirmDelete ? ' danger' : ''}" data-action="delete">${ui.confirmDelete ? 'Na pewno usunąć?' : 'Usuń'}</button>
@@ -475,19 +519,15 @@ function saveSheet() {
   const form = sheet.querySelector('#edit-form');
   if (!form || !ui.editId) return;
   const f = new FormData(form);
-  S.updateItem(
-    doc,
-    ui.editId,
-    {
-      title: f.get('title'),
-      tags: f.get('tags'),
-      kind: f.get('kind'),
-      note: f.get('note'),
-      url: f.get('url'),
-      status: f.get('read') ? 'read' : 'unread',
-    },
-    Date.now(),
-  );
+  const patch = {
+    title: f.get('title'),
+    tags: f.get('tags'),
+    kind: f.get('kind'),
+    note: f.get('note'),
+    status: f.get('read') ? 'read' : 'unread',
+  };
+  if (f.has('url')) patch.url = f.get('url');
+  S.updateItem(doc, ui.editId, patch, Date.now());
   persist();
 }
 
@@ -516,13 +556,14 @@ function settingsView() {
       <h2>Dodawanie linków</h2>
       <p><strong>Telefon:</strong> zainstaluj aplikację (Chrome → ⋮ → „Zainstaluj aplikację”), a potem w dowolnej aplikacji wybierz „Udostępnij” → Doczytania.</p>
       <p><strong>Komputer:</strong> przeciągnij <a class="btn small bookmarklet" href="${esc(bookmarklet)}" data-action="bookmarklet">+ Doczytania</a> na pasek zakładek albo wklej link w pole wyszukiwania.</p>
+      <p><strong>PDF:</strong> udostępnij plik do Doczytań, dodaj go przyciskiem z kartką u góry listy albo przeciągnij na listę. Plik trafia do repozytorium z danymi, więc potrzebna jest synchronizacja. GitHub zamienia go na tekst, który dobrze się czyta na telefonie (przycisk „Czytaj”). Tak samo z linkami do PDF-ów i arXiv.</p>
     </section>
     ${tags.length ? tagsSection(tags) : ''}
     <section>
       <h2>Kopia</h2>
       <div class="row">
         <button class="btn" type="button" data-action="export">Pobierz</button>
-        <label class="btn file-btn">Wczytaj<input type="file" accept="application/json,.json" data-action="import" hidden></label>
+        <button class="btn" type="button" data-action="pick-import">Wczytaj</button>
       </div>
       ${ui.importMsg ? `<p class="field-note" role="status">${esc(ui.importMsg)}</p>` : ''}
     </section>
@@ -613,15 +654,26 @@ function pushNav(screen) {
   }
 }
 
+function replaceNav(screen) {
+  try {
+    history.replaceState({ screen, depth: navDepth() }, '');
+  } catch {
+    // See pushNav.
+  }
+}
+
 window.addEventListener('popstate', () => {
   const screen = history.state?.screen ?? 'list';
   if (screen !== 'edit' && ui.editId) {
     ui.editId = null;
     ui.editIntro = '';
   }
+  const wasReader = ui.view === 'reader';
   if (screen === 'list') ui.view = 'list';
   else if (screen === 'settings') ui.view = 'settings';
+  else if (screen === 'reader' && readerItem()) ui.view = 'reader';
   render();
+  if (wasReader && ui.view === 'list') window.scrollTo(0, ui.listScroll);
 });
 
 function goSettings() {
@@ -678,6 +730,326 @@ function takeSharedLink() {
   if (shared) addLink(shared, { fromShare: true });
   else toast('W udostępnionym tekście nie było linku.');
 }
+
+// ---------- reading view ----------
+//
+// The text of a PDF (Markdown from the Action) is fetched from the data
+// repository when it is first opened, then kept in the cache storage for
+// reading offline. The place where reading stopped is kept per link.
+
+const readerItem = () => (ui.readerId ? (doc.items.find((i) => i.id === ui.readerId) ?? null) : null);
+const textKey = (item) => new URL(`texts/${item.id}.md?at=${S.textOf(item).at}`, location.href).href;
+
+const READER_ERRORS = {
+  nosync: 'Tekst jest w repozytorium z danymi. Żeby go otworzyć, połącz synchronizację w ustawieniach.',
+  network: 'Brak internetu, a tego tekstu nie otwierano jeszcze na tym urządzeniu.',
+  notFound: 'Tekstu nie ma jeszcze w repozytorium. Spróbuj za chwilę.',
+  auth: 'GitHub nie przyjął tokena. Połącz synchronizację ponownie w ustawieniach.',
+  bad: 'Nie udało się wczytać tekstu.',
+};
+
+async function loadText(item) {
+  const key = textKey(item);
+  const cache = await openCache(TEXTS_CACHE);
+  const hit = await cache?.match(key);
+  if (hit) return hit.text();
+  if (!syncConfig) throw Object.assign(new Error('nosync'), { kind: 'nosync' });
+  const text = await remoteFor(syncConfig).readText(S.textOf(item).path);
+  try {
+    for (const req of (await cache?.keys()) ?? []) if (req.url.includes(`/texts/${item.id}.md`)) await cache.delete(req);
+    await cache?.put(key, new Response(text, { headers: { 'Content-Type': 'text/markdown; charset=utf-8' } }));
+  } catch {
+    // Not kept for offline; it still opens now.
+  }
+  return text;
+}
+
+function openReader(id) {
+  const item = doc.items.find((i) => i.id === id);
+  if (!item || !S.textOf(item)) return;
+  if (ui.view === 'list') ui.listScroll = window.scrollY;
+  const here = history.state?.screen;
+  Object.assign(ui, { view: 'reader', readerId: id, readerHtml: null, readerError: null });
+  if (here === 'edit' || here === 'reader') replaceNav('reader');
+  else pushNav('reader');
+  render();
+  window.scrollTo(0, 0);
+  const key = textKey(item);
+  ui.readerFor = key;
+  loadText(item)
+    .then((md) => {
+      if (ui.readerFor !== key) return;
+      ui.readerHtml = renderMarkdown(dropTitle(md, S.titleOf(item)));
+      render();
+      restorePosition(id);
+    })
+    .catch((e) => {
+      if (ui.readerFor !== key) return;
+      ui.readerError = e?.kind ?? 'bad';
+      render();
+    });
+}
+
+// The text itself is not rebuilt on every render (sync state, a toggle),
+// so the scroll position and a selection stay where they are.
+function renderReader() {
+  const item = readerItem();
+  const key = `${item.id}:${prefs.readerSize}:${ui.readerHtml ? 'text' : (ui.readerError ?? 'loading')}`;
+  const body = document.getElementById('reader-body');
+  if (body?.dataset.key === key) {
+    document.getElementById('reader-bar').innerHTML = readerBar(item);
+    document.getElementById('reader-end').innerHTML = readerEnd(item);
+    return;
+  }
+  app.innerHTML = `<header class="bar reader-bar" id="reader-bar">${readerBar(item)}</header>
+    <article class="reader size-${prefs.readerSize}" id="reader-body" data-key="${esc(key)}" lang="${esc(item.meta?.lang || '')}">${readerContent(item)}</article>
+    <footer class="reader-end" id="reader-end">${readerEnd(item)}</footer>`;
+}
+
+function readerBar(item) {
+  return `<button class="icon-btn" type="button" data-action="back" aria-label="Wróć" title="Wróć">${ICON.back}</button>
+    <p class="reader-bar-title">${esc(S.titleOf(item))}</p>
+    <div class="bar-actions">
+      <button class="icon-btn small text-size" type="button" data-action="reader-size" data-value="-1" aria-label="Mniejsze litery" title="Mniejsze litery"${prefs.readerSize <= 0 ? ' disabled' : ''}>A−</button>
+      <button class="icon-btn small text-size" type="button" data-action="reader-size" data-value="1" aria-label="Większe litery" title="Większe litery"${prefs.readerSize >= 4 ? ' disabled' : ''}>A+</button>
+    </div>`;
+}
+
+function readerContent(item) {
+  const text = S.textOf(item);
+  const m = item.meta ?? {};
+  const author = m.author && m.author.length > 90 ? `${m.author.slice(0, 88).replace(/[\s;,]+\S*$/, '')} i in.` : m.author;
+  const info = [
+    esc(author || ''),
+    esc(item.file ? item.file.name : m.site || S.domainOf(item.url)),
+    text.pages ? `${text.pages} str. PDF` : '',
+    S.readingMinutes(item) ? `${S.readingMinutes(item)} min` : '',
+    `<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">${item.file ? 'plik PDF' : 'oryginał'}</a>`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  let body;
+  if (ui.readerHtml) body = `<div class="reader-text">${ui.readerHtml}</div>`;
+  else if (ui.readerError) {
+    body = `<p class="error" role="alert">${esc(READER_ERRORS[ui.readerError] ?? READER_ERRORS.bad)}</p>
+      <div class="row"><button class="btn" type="button" data-action="reader-retry">Spróbuj ponownie</button></div>`;
+  } else body = '<p class="field-note" role="status">Wczytuję tekst…</p>';
+  return `<h1>${esc(S.titleOf(item))}</h1>
+    <p class="reader-info">${info}</p>
+    <p class="reader-warn">Tekst wyciągnięty z PDF-a, bez rysunków i wzorów.</p>
+    ${body}`;
+}
+
+function readerEnd(item) {
+  if (!ui.readerHtml) return '';
+  const read = item.status === 'read';
+  return `<button class="btn${read ? '' : ' primary'}" type="button" data-action="reader-toggle">${read ? 'Przywróć do przeczytania' : 'Oznacz jako przeczytane'}</button>
+    <button class="btn" type="button" data-action="back">Wróć do listy</button>`;
+}
+
+const POS_KEY = 'doczytania:pos';
+let posTimer = 0;
+
+function savePosition() {
+  if (ui.view !== 'reader' || !ui.readerHtml) return;
+  const max = document.documentElement.scrollHeight - window.innerHeight;
+  if (max <= 0) return;
+  const all = readJson(POS_KEY);
+  all[ui.readerId] = [Math.round((window.scrollY / max) * 10000) / 10000, Date.now()];
+  const kept = Object.entries(all)
+    .sort((a, b) => b[1][1] - a[1][1])
+    .slice(0, 100);
+  try {
+    storage?.setItem(POS_KEY, JSON.stringify(Object.fromEntries(kept)));
+  } catch {
+    // The place is then not remembered.
+  }
+}
+
+function restorePosition(id) {
+  const at = readJson(POS_KEY)[id]?.[0];
+  if (!(at > 0)) return;
+  const max = document.documentElement.scrollHeight - window.innerHeight;
+  window.scrollTo(0, at * max);
+}
+
+window.addEventListener('scroll', () => {
+  if (ui.view !== 'reader') return;
+  clearTimeout(posTimer);
+  posTimer = setTimeout(savePosition, 400);
+});
+
+// ---------- PDF files ----------
+//
+// A PDF added on this device waits in the cache storage until the next sync
+// sends it to <person>/doczytania/<id>.pdf in the data repository. There
+// the Action takes the title from it and turns it into a text.
+
+const FILES_CACHE = 'doczytania-files';
+const TEXTS_CACHE = 'doczytania-texts';
+const SHARE_CACHE = 'doczytania-share'; // files shared from other apps (sw.js)
+const MAX_FILE = 40 * 1024 * 1024;
+const pendingFiles = new Set();
+const pendingKey = (id) => new URL(`pending/${id}.pdf`, location.href).href;
+const failedUploads = new Set();
+
+async function openCache(name) {
+  try {
+    return 'caches' in window ? await caches.open(name) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Files waiting to be sent; files and texts of deleted links go.
+async function loadPendingFiles() {
+  const ids = new Set(doc.items.map((i) => i.id));
+  try {
+    const files = await openCache(FILES_CACHE);
+    for (const req of (await files?.keys()) ?? []) {
+      const id = req.url.match(/\/pending\/([^/]+)\.pdf$/)?.[1];
+      if (id && ids.has(id)) pendingFiles.add(id);
+      else await files.delete(req);
+    }
+    const texts = await openCache(TEXTS_CACHE);
+    for (const req of (await texts?.keys()) ?? []) {
+      const id = req.url.match(/\/texts\/([^/]+)\.md/)?.[1];
+      if (!id || !ids.has(id)) await texts.delete(req);
+    }
+  } catch {
+    // Tried again at the next start.
+  }
+}
+
+async function uploadPending(config) {
+  if (!pendingFiles.size) return;
+  const cache = await openCache(FILES_CACHE);
+  const remote = remoteFor(config);
+  for (const id of [...pendingFiles]) {
+    const item = doc.items.find((i) => i.id === id);
+    const res = await cache?.match(pendingKey(id));
+    if (!item || !res) {
+      pendingFiles.delete(id);
+      await cache?.delete(pendingKey(id));
+      continue;
+    }
+    try {
+      await remote.putFile(filePath(config.person, id, 'pdf'), await res.arrayBuffer(), `Doczytania: plik ${item.file?.name ?? id}`);
+    } catch (e) {
+      // No connection or no access stops the whole sync; anything else is
+      // about this file, which waits for the next sync.
+      if (['network', 'auth', 'forbidden', 'notFound'].includes(e?.kind)) throw e;
+      if (!failedUploads.has(id)) toast(`Nie udało się wysłać pliku ${item.file?.name ?? ''}. Spróbuję przy następnej synchronizacji.`);
+      failedUploads.add(id);
+      continue;
+    }
+    pendingFiles.delete(id);
+    await cache?.delete(pendingKey(id));
+  }
+}
+
+async function sha256Hex(bytes) {
+  try {
+    const hash = await crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    return undefined;
+  }
+}
+
+const sizeText = (bytes) =>
+  bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} kB` : `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
+
+async function addPdfFiles(files) {
+  const config = syncConfig;
+  if (!config) {
+    toast('Pliki PDF trafiają do repozytorium z danymi. Najpierw połącz synchronizację.', 'Ustawienia', goSettings);
+    return;
+  }
+  const added = [];
+  for (const file of files) {
+    const name = file.name || 'plik.pdf';
+    if (file.size > MAX_FILE) {
+      toast(`${name} ma ponad 40 MB. Takiego pliku nie da się wysłać.`);
+      continue;
+    }
+    const bytes = await file.arrayBuffer();
+    if (new TextDecoder().decode(new Uint8Array(bytes, 0, Math.min(5, bytes.byteLength))) !== '%PDF-') {
+      toast(`${name} nie jest plikiem PDF.`);
+      continue;
+    }
+    const sha256 = await sha256Hex(bytes);
+    const res = S.addFile(doc, { name, size: file.size, sha256 }, (id) => fileWebUrl(config.repo, filePath(config.person, id, 'pdf')), Date.now());
+    if (!res.existed) {
+      const cache = await openCache(FILES_CACHE);
+      try {
+        await cache.put(pendingKey(res.item.id), new Response(new Blob([bytes], { type: 'application/pdf' })));
+        pendingFiles.add(res.item.id);
+      } catch {
+        // No room to keep it until the sync: send it now or give up.
+        try {
+          await remoteFor(config).putFile(filePath(config.person, res.item.id, 'pdf'), bytes, `Doczytania: plik ${name}`);
+        } catch {
+          doc.items = doc.items.filter((i) => i.id !== res.item.id);
+          toast(`Nie udało się zapisać pliku ${name}.`);
+          continue;
+        }
+      }
+    }
+    added.push(res);
+  }
+  if (!added.length) return;
+  sync.metaChecks = 0;
+  persist();
+  scheduleSync(500);
+  if (prefs.status === 'read') prefs.status = 'unread';
+  Object.assign(prefs, { kind: '', tag: '' });
+  savePrefs();
+  ui.query = '';
+  if (added.length === 1) openEdit(added[0].item.id, added[0].existed ? 'Ten PDF już był na liście' : 'Zapisano PDF');
+  else {
+    render();
+    toast(`Zapisano pliki PDF: ${added.length}.`);
+  }
+}
+
+// A file shared from another app: sw.js keeps it and opens ?file=<key>.
+async function takeSharedFile() {
+  const key = new URLSearchParams(location.search).get('file');
+  if (!key) return;
+  try {
+    history.replaceState({ screen: 'list', depth: 0 }, '', location.pathname);
+  } catch {
+    // The parameter then stays in the address bar; harmless.
+  }
+  const cache = await openCache(SHARE_CACHE);
+  const url = new URL(`shared/${encodeURIComponent(key)}`, location.href).href;
+  const res = await cache?.match(url);
+  if (!res) {
+    toast('Nie udało się odebrać pliku.');
+    return;
+  }
+  const name = decodeURIComponent(res.headers.get('X-File-Name') || '') || 'plik.pdf';
+  const blob = await res.blob();
+  await addPdfFiles([new File([blob], name, { type: blob.type || 'application/pdf' })]);
+  for (const req of await cache.keys()) await cache.delete(req);
+}
+
+// PDFs dragged onto the window (on a computer).
+document.addEventListener('dragover', (e) => {
+  if (![...(e.dataTransfer?.types ?? [])].includes('Files')) return;
+  e.preventDefault();
+  document.body.classList.add('dropping');
+});
+document.addEventListener('dragleave', (e) => {
+  if (!e.relatedTarget) document.body.classList.remove('dropping');
+});
+document.addEventListener('drop', (e) => {
+  if (!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  document.body.classList.remove('dropping');
+  addPdfFiles([...e.dataTransfer.files]);
+});
 
 // ---------- backup ----------
 
@@ -800,6 +1172,30 @@ function onClick(e) {
     case 'edit':
       openEdit(id);
       break;
+    case 'reader': {
+      const target = id ?? ui.editId;
+      if (sheet.open) {
+        saveSheet();
+        ui.editId = null;
+        ui.editIntro = '';
+      }
+      openReader(target);
+      break;
+    }
+    case 'reader-retry':
+      openReader(ui.readerId);
+      break;
+    case 'reader-size':
+      prefs.readerSize = Math.max(0, Math.min(4, prefs.readerSize + Number(value)));
+      savePrefs();
+      render();
+      break;
+    case 'reader-toggle': {
+      S.toggleRead(doc, ui.readerId, Date.now());
+      persist();
+      render();
+      break;
+    }
     case 'sheet-close':
       saveSheet();
       closeSheet();
@@ -845,6 +1241,12 @@ function onClick(e) {
     case 'export':
       exportDoc();
       break;
+    case 'pick-import':
+      pickFiles('application/json,.json', false, ([file]) => importDoc(file));
+      break;
+    case 'pick-pdf':
+      pickFiles('application/pdf,.pdf', true, addPdfFiles);
+      break;
     case 'rename-tag': {
       const to = prompt(`Nowa nazwa tagu #${value}:`, value);
       if (to == null || !to.trim()) break;
@@ -875,9 +1277,19 @@ app.addEventListener('input', (e) => {
   renderResults();
 });
 
-app.addEventListener('change', (e) => {
-  if (e.target.dataset.action === 'import' && e.target.files?.[0]) importDoc(e.target.files[0]);
-});
+// File inputs live outside the views: a sync that redraws the view while
+// the file dialog is open would otherwise lose the chosen file.
+function pickFiles(accept, multiple, onFiles) {
+  const input = document.createElement('input');
+  Object.assign(input, { type: 'file', accept, multiple, hidden: true });
+  input.addEventListener('change', () => {
+    if (input.files?.length) onFiles([...input.files]);
+    input.remove();
+  });
+  input.addEventListener('cancel', () => input.remove());
+  document.body.append(input);
+  input.click();
+}
 
 app.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -954,14 +1366,19 @@ try {
 }
 render();
 takeSharedLink();
-if (syncConfig) syncNow();
+takeSharedFile();
+loadPendingFiles().then(() => {
+  render();
+  if (syncConfig) syncNow();
+});
 
 if ('serviceWorker' in navigator && window.isSecureContext) {
   const hadController = Boolean(navigator.serviceWorker.controller);
   let reloading = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    // A new version took over: reload into it, unless the user is editing.
-    if (!hadController || reloading || ui.editId) return;
+    // A new version took over: reload into it, unless the user is editing
+    // or reading.
+    if (!hadController || reloading || ui.editId || ui.view === 'reader') return;
     reloading = true;
     window.location.reload();
   });
