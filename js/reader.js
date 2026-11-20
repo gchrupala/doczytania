@@ -24,11 +24,18 @@ export function inline(text) {
     .replace(/\0/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '') // images: the Action does not keep them
     .replace(/`([^`]+)`/g, (_, c) => `\0${codes.push(c) - 1}\0`);
-  s = esc(s)
-    .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
-    .replace(/&lt;(sup|sub|u|b|i)&gt;([\s\S]*?)&lt;\/\1&gt;/gi, (_, tag, inner) => `<${tag.toLowerCase()}>${inner}</${tag.toLowerCase()}>`)
+  s = esc(s).replace(/&lt;br\s*\/?&gt;/gi, '<br>');
+  // Pairs of simple tags, also nested ones (<sup><u>1</u></sup>).
+  for (let k = 0, prev = ''; k < 4 && prev !== s; k++) {
+    prev = s;
+    s = s.replace(/&lt;(sup|sub|u|b|i)&gt;([\s\S]*?)&lt;\/\1&gt;/gi, (_, tag, inner) => `<${tag.toLowerCase()}>${inner}</${tag.toLowerCase()}>`);
+  }
+  s = s
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
     .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>')
+    // ~~x~~ in a PDF is a line through the text: almost always the bar of a
+    // root or a fraction, not a deletion. The text stays, the line goes.
+    .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '$1')
     // _x_ only between non-letters, so snake_case_names stay as they are.
     .replace(/(^|[^\p{L}_])_(?=\S)([^_]*?\S)_(?=$|[^\p{L}_])/gu, '$1<em>$2</em>')
     .replace(/(^|[^\p{L}\p{N}*])\*(?=\S)([^*]*?\S)\*(?![*\p{L}\p{N}])/gu, '$1<em>$2</em>');

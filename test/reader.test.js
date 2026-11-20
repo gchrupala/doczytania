@@ -51,6 +51,8 @@ test('inline: emphasis as pymupdf4llm writes it, snake_case untouched', () => {
   assert.equal(inline('Aw<sup>_∗_</sup> and H<sub>2</sub>O<br>next'), 'Aw<sup><em>∗</em></sup> and H<sub>2</sub>O<br>next');
   assert.equal(inline('a * b * c and *x*'), 'a * b * c and <em>x</em>');
   assert.equal(inline('`a**b**`'), '<code>a**b**</code>');
+  assert.equal(inline('length _~~√~~ X_'), 'length <em>√ X</em>');
+  assert.equal(inline('Ω<sup><u>(0)</u></sup> and <sup><u>a</u></sup><sup><u>3</u>+</sup>'), 'Ω<sup><u>(0)</u></sup> and <sup><u>a</u></sup><sup><u>3</u>+</sup>');
 });
 
 test('a PDF cannot inject markup or scripts', () => {
